@@ -3084,12 +3084,32 @@ __gitcomp_directories ()
 			COMPREPLY+=("$c/")
 			_found=1
 		fi
-	done < <(git ls-tree -z -d --name-only HEAD $_tmp_dir)
+	done < <(__git ls-tree -z -d --name-only HEAD $_tmp_dir)
 
 	if [[ $_found == 0 ]] && [[ "$cur" =~ /$ ]]; then
 		# No possible further completions any deeper, so assume we're at
 		# a leaf directory and just consider it complete
 		__gitcomp_direct_append "$cur "
+	elif [[ $_found == 0 ]]; then
+		# No possible completions found.  Avoid falling back to
+		# bash's default file and directory completion, because all
+		# valid completions have already been searched and the
+		# fallbacks can do nothing but mislead.  In fact, they can
+		# mislead in three different ways:
+		#    1) Fallback file completion makes no sense when asking
+		#       for directory completions, as this function does.
+		#    2) Fallback directory completion is bad because
+		#       e.g. "/pro" is invalid and should NOT complete to
+		#       "/proc".
+		#    3) Fallback file/directory completion only completes
+		#       on paths that exist in the current working tree,
+		#       i.e. which are *already* part of their
+		#       sparse-checkout.  Thus, normal file and directory
+		#       completion is always useless for "git
+		#       sparse-checkout add" and is also probelmatic for
+		#       "git sparse-checkout set" unless using it to
+		#       strictly narrow the checkout.
+		COMPREPLY=( "" )
 	fi
 }
 
@@ -3097,6 +3117,7 @@ _git_sparse_checkout ()
 {
 	local subcommands="list init set disable add reapply"
 	local subcommand="$(__git_find_on_cmdline "$subcommands")"
+	local using_cone=true
 	if [ -z "$subcommand" ]; then
 		__gitcomp "$subcommands"
 		return
@@ -3107,9 +3128,78 @@ _git_sparse_checkout ()
 		__gitcomp_builtin sparse-checkout_$subcommand "" "--"
 		;;
 	set,*|add,*)
-		if [ "$(__git config core.sparseCheckoutCone)" == "true" ] ||
-		[ -n "$(__git_find_on_cmdline --cone)" ]; then
+		if [[ "$(__git config core.sparseCheckout)" == "true" &&
+		      "$(__git config core.sparseCheckoutCone)" == "false" &&
+		      -z "$(__git_find_on_cmdline --cone)" ]]; then
+			using_cone=false
+		fi
+		if [[ -n "$(__git_find_on_cmdline --no-cone)" ]]; then
+			using_cone=false
+		fi
+		if [[ "$using_cone" == "true" ]]; then
 			__gitcomp_directories
+		else
+			# NEEDSWORK: It might be useful to provide a
+			# completion function which:
+			#
+			#     1. Provides completions based on
+			#        files/directories that exist in HEAD (or in
+			#        the index since sparse-index isn't possible
+			#        in non-cone mode), not just those currently
+			#        present in the working tree.  Bash's
+			#        default file and directory completion is
+			#        totally useless for "git sparse-checkout
+			#        add" because of this.  It is likewise
+			#        problematic for "git sparse-checkout set"
+			#        except in those subset of cases when trying
+			#        to narrow scope to a strict subset of what
+			#        you already have checked out.
+			#
+			#     2. Always provides file/directory completions
+			#        with a prepended leading '/', so that
+			#        files/directories are only searched at the
+			#        relevant level rather than throughout all
+			#        trees in the hierarchy.  Doing this also
+			#        avoids suggesting the user run a
+			#        sparse-checkout command that will result in
+			#        a warning be thrown at the user.
+			#
+			#     3. Does not accidentally search the root of
+			#        the filesystem when a path with a leading
+			#        slash is specified.  ("git sparse-checkout
+			#        add /ho<TAB>" should not complete to
+			#        "/home" but to e.g. "/hooks" if there is a
+			#        "hooks" in the top of the repository.)
+			#
+			#     4. Provides no completions when run from a
+			#        subdirectory of the repository root.  (If we
+			#        did provide file/directory completions, the
+			#        user would just get a "please run from the
+			#        toplevel directory" error message when they
+			#        ran it.  *Further*, if the user did rerun
+			#        the command from the toplevel, the
+			#        completions we previously provided would
+			#        likely be wrong as they'd be relative to the
+			#        subdirectory rather than the repository
+			#        root.  That could lead to users getting a
+			#        nasty surprise based on trying to use a
+			#        command we helped them create.)
+			#
+			#     5. Provides escaped completions for any paths
+			#        containing a '*', '?', '\', '[', ']', or
+			#        leading '#' or '!'.  (These characters might
+			#        already be escaped to protect from the
+			#        shell, but they need an *extra* layer of
+			#        escaping to prevent the pattern parsing in
+			#        Git from seeing them as special characters.)
+			#
+			# Of course, this would be a lot of work, so for now,
+			# just avoid the many forms of user confusion that
+			# could be caused by providing bad completions by
+			# providing a fake completion to avoid falling back to
+			# bash's normal file and directory completion.
+
+			COMPREPLY=( "" )
 		fi
 	esac
 }
