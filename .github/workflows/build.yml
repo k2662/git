@@ -12,7 +12,11 @@ jobs:
 
     steps:
     - name: install deps
-      run: brew install make gnu-tar
+      run: brew install make gnu-tar coreutils
     - uses: actions/checkout@v4
     - name: build git for mac
-      run: make
+      run: gmake -j $(gnproc)
+
+    - uses: actions/upload-artifact@v3
+      with:
+        path: ./
